@@ -20,20 +20,21 @@ def debug_print(message):
 class Warehouse:
     """Warehouse environment with obstacles, goals, and docks."""
     
-    def __init__(self):
+    def __init__(self, map_name='map1'):
         self.obstacles = set()
         self.goals = []
         self.loading_dock = None
         self.discharge_dock = None
         self.width = WAREHOUSE_WIDTH
         self.height = WAREHOUSE_HEIGHT
-        debug_log("Creating warehouse layout...")
-        self.create_maze_layout()
-        self.create_docks_and_goals()
+        self.map_name = map_name
+        debug_log(f"Creating warehouse layout: {map_name}...")
+        self.create_maze_layout(map_name)
+        self.create_docks_and_goals(map_name)
         debug_log(f"Warehouse created with {len(self.obstacles)} obstacles and {len(self.goals)} goals")
     
-    def create_maze_layout(self):
-        """Create the maze layout with obstacles."""
+    def create_maze_layout(self, map_name='map1'):
+        """Create the maze layout with obstacles based on map name."""
         # Create walls around the perimeter
         for x in range(WAREHOUSE_WIDTH):
             self.obstacles.add((x, 0))
@@ -42,32 +43,88 @@ class Warehouse:
             self.obstacles.add((0, y))
             self.obstacles.add((WAREHOUSE_WIDTH - 1, y))
         
-        # Create internal maze structure with wider paths
-        # Horizontal corridors (skip every 5th row for wider paths)
-        for y in [4, 8, 12]:
-            if y < WAREHOUSE_HEIGHT:
-                for x in range(2, WAREHOUSE_WIDTH - 2):
-                    if x % 8 not in [0, 1]:  # Wider gaps for vertical passages
-                        self.obstacles.add((x, y))
+        if map_name == 'map1':
+            # Original map layout
+            # Create internal maze structure with wider paths
+            # Horizontal corridors (skip every 5th row for wider paths)
+            for y in [4, 8, 12]:
+                if y < WAREHOUSE_HEIGHT:
+                    for x in range(2, WAREHOUSE_WIDTH - 2):
+                        if x % 8 not in [0, 1]:  # Wider gaps for vertical passages
+                            self.obstacles.add((x, y))
+            
+            # Vertical corridors (wider spacing)
+            for x in [7, 15]:
+                if x < WAREHOUSE_WIDTH:
+                    for y in range(2, WAREHOUSE_HEIGHT - 2):
+                        if y % 6 not in [0, 1]:  # Wider gaps for horizontal passages
+                            self.obstacles.add((x, y))
+            
+            # Add strategic obstacles
+            maze_obstacles = [
+                (4, 6), (10, 6), (18, 6),
+                (4, 10), (12, 10), (20, 10),
+                (6, 14), (14, 14), (22, 14),
+            ]
+            for x, y in maze_obstacles:
+                if x < WAREHOUSE_WIDTH and y < WAREHOUSE_HEIGHT:
+                    self.obstacles.add((x, y))
         
-        # Vertical corridors (wider spacing)
-        for x in [7, 15]:
-            if x < WAREHOUSE_WIDTH:
-                for y in range(2, WAREHOUSE_HEIGHT - 2):
-                    if y % 6 not in [0, 1]:  # Wider gaps for horizontal passages
-                        self.obstacles.add((x, y))
+        elif map_name == 'map2':
+            # Different map layout - more open with grid-like obstacles
+            # Create vertical walls with gaps
+            for x in [5, 10, 15, 20]:
+                if x < WAREHOUSE_WIDTH:
+                    for y in range(2, WAREHOUSE_HEIGHT - 2):
+                        if y % 4 not in [0, 1]:  # Gaps every 4 cells
+                            self.obstacles.add((x, y))
+            
+            # Create horizontal walls with gaps
+            for y in [3, 7, 11, 15]:
+                if y < WAREHOUSE_HEIGHT:
+                    for x in range(2, WAREHOUSE_WIDTH - 2):
+                        if x % 4 not in [0, 1]:  # Gaps every 4 cells
+                            self.obstacles.add((x, y))
+            
+            # Add some scattered obstacles
+            scattered_obstacles = [
+                (3, 5), (8, 5), (13, 5), (18, 5),
+                (6, 9), (11, 9), (16, 9), (21, 9),
+                (4, 13), (9, 13), (14, 13), (19, 13),
+            ]
+            for x, y in scattered_obstacles:
+                if x < WAREHOUSE_WIDTH and y < WAREHOUSE_HEIGHT:
+                    self.obstacles.add((x, y))
         
-        # Add strategic obstacles
-        maze_obstacles = [
-            (4, 6), (10, 6), (18, 6),
-            (4, 10), (12, 10), (20, 10),
-            (6, 14), (14, 14), (22, 14),
-        ]
-        for x, y in maze_obstacles:
-            if x < WAREHOUSE_WIDTH and y < WAREHOUSE_HEIGHT:
-                self.obstacles.add((x, y))
+        elif map_name == 'map3':
+            # Another different layout - more maze-like with winding paths
+            # Create a complex maze pattern
+            for y in [3, 6, 9, 12, 15]:
+                if y < WAREHOUSE_HEIGHT:
+                    for x in range(2, WAREHOUSE_WIDTH - 2):
+                        if (x + y) % 5 not in [0, 1]:  # Pattern with gaps
+                            self.obstacles.add((x, y))
+            
+            # Vertical walls with pattern
+            for x in [6, 12, 18]:
+                if x < WAREHOUSE_WIDTH:
+                    for y in range(2, WAREHOUSE_HEIGHT - 2):
+                        if (x + y) % 6 not in [0, 1, 2]:  # Different pattern
+                            self.obstacles.add((x, y))
+            
+            # Add corner obstacles
+            corner_obstacles = [
+                (3, 4), (9, 4), (15, 4), (21, 4),
+                (3, 8), (9, 8), (15, 8), (21, 8),
+                (3, 12), (9, 12), (15, 12), (21, 12),
+                (5, 6), (11, 6), (17, 6), (23, 6),
+                (5, 10), (11, 10), (17, 10), (23, 10),
+            ]
+            for x, y in corner_obstacles:
+                if x < WAREHOUSE_WIDTH and y < WAREHOUSE_HEIGHT:
+                    self.obstacles.add((x, y))
     
-    def create_docks_and_goals(self):
+    def create_docks_and_goals(self, map_name='map1'):
         """Create loading dock, discharge dock, and goal locations."""
         # Loading dock at top left area
         self.loading_dock = (2, 2)
@@ -75,12 +132,8 @@ class Warehouse:
         # Discharge dock at robot starting position
         self.discharge_dock = (1, 1)
         
-        # Create goal points (packages to collect)
-        self.goals = [
-            (5, 5), (9, 3), (13, 6),
-            (17, 5), (19, 9), (11, 11),
-            (7, 13), (21, 13)
-        ]
+        # Generate random goals with constraints
+        self.goals = self.generate_random_goals(num_goals=8)
     
     def is_blocked(self, x, y):
         """Check if a position is blocked by an obstacle."""
@@ -102,6 +155,116 @@ class Warehouse:
                 if not self.is_blocked(x, y):
                     free_cells.append((x, y))
         return free_cells
+    
+    def is_reachable(self, start_pos, target_pos):
+        """
+        Check if target_pos is reachable from start_pos using BFS.
+        
+        Args:
+            start_pos: (x, y) starting position
+            target_pos: (x, y) target position
+            
+        Returns:
+            bool: True if target is reachable from start
+        """
+        if start_pos == target_pos:
+            return True
+        
+        if target_pos in self.obstacles:
+            return False
+        
+        # BFS to check reachability
+        from collections import deque
+        
+        queue = deque([start_pos])
+        visited = {start_pos}
+        
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]  # N, S, E, W
+        
+        while queue:
+            current = queue.popleft()
+            
+            if current == target_pos:
+                return True
+            
+            x, y = current
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                neighbor = (nx, ny)
+                
+                # Check bounds
+                if not (0 <= nx < WAREHOUSE_WIDTH and 0 <= ny < WAREHOUSE_HEIGHT):
+                    continue
+                
+                # Check if obstacle
+                if neighbor in self.obstacles:
+                    continue
+                
+                # Check if already visited
+                if neighbor in visited:
+                    continue
+                
+                visited.add(neighbor)
+                queue.append(neighbor)
+        
+        return False
+    
+    def generate_random_goals(self, num_goals=8):
+        """
+        Generate random goal locations with constraints:
+        1. Not on obstacles
+        2. Within map bounds
+        3. Reachable from discharge dock
+        
+        Args:
+            num_goals: Number of goals to generate
+            
+        Returns:
+            list: List of (x, y) goal positions
+        """
+        import random
+        
+        goals = []
+        free_cells = self.get_free_cells()
+        
+        # Remove discharge dock and loading dock from free cells
+        free_cells = [cell for cell in free_cells 
+                     if cell != self.discharge_dock and cell != self.loading_dock]
+        
+        if len(free_cells) < num_goals:
+            debug_log(f"Warning: Not enough free cells ({len(free_cells)}) for {num_goals} goals")
+            num_goals = len(free_cells)
+        
+        start_pos = self.discharge_dock if self.discharge_dock else (1, 1)
+        max_attempts = num_goals * 100  # Limit attempts
+        attempts = 0
+        
+        while len(goals) < num_goals and attempts < max_attempts:
+            attempts += 1
+            
+            # Randomly select a free cell
+            candidate = random.choice(free_cells)
+            
+            # Check constraints
+            # 1. Not on obstacle (already guaranteed by free_cells)
+            # 2. Within bounds (already guaranteed by free_cells)
+            # 3. Not already in goals
+            if candidate in goals:
+                continue
+            
+            # 4. Reachable from start position
+            if not self.is_reachable(start_pos, candidate):
+                continue
+            
+            # All constraints satisfied - add goal
+            goals.append(candidate)
+            debug_log(f"Generated goal {len(goals)} at {candidate}")
+        
+        if len(goals) < num_goals:
+            debug_log(f"Warning: Only generated {len(goals)}/{num_goals} goals after {attempts} attempts")
+        
+        debug_log(f"Generated {len(goals)} random goals: {goals}")
+        return goals
     
     def draw(self, surface, robot):
         """Draw the warehouse grid, obstacles, goals, and docks."""

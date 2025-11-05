@@ -20,6 +20,9 @@ parser.add_argument('--algo', type=str, default='A*',
                     choices=['A*', 'astar', 'A-star', 'A_star', 'dijkstra', 'Dijkstra', 
                             'rrt', 'RRT', 'prm', 'PRM'],
                     help='Pathfinding algorithm to use (default: A*)')
+parser.add_argument('--map', type=str, default='map1',
+                    choices=['map1', 'map2', 'map3'],
+                    help='Map configuration to use (default: map1)')
 args = parser.parse_args()
 
 # Normalize algorithm name (robot expects: 'A*', 'DIJKSTRA', 'RRT', 'PRM')
@@ -38,15 +41,16 @@ pygame.init()
 
 # Create the display
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption(f"Warehouse Robot Simulation - DFS Exploration with {algorithm}")
+pygame.display.set_caption(f"Warehouse Robot Simulation - {args.map.upper()} - {algorithm}")
 clock = pygame.time.Clock()
 
 # Initialize warehouse and robot
 debug_log("=" * 50)
 debug_log(f"INITIALIZING WAREHOUSE ROBOT SIMULATION WITH DFS EXPLORATION")
+debug_log(f"Map: {args.map.upper()}")
 debug_log(f"Pathfinding Algorithm: {algorithm}")
 debug_log("=" * 50)
-warehouse = Warehouse()
+warehouse = Warehouse(map_name=args.map)
 robot = Robot(1, 1, warehouse=warehouse, pathfinding_algorithm=algorithm)
 
 # Start autonomous mapping phase
