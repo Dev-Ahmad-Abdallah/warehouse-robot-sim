@@ -10,6 +10,7 @@ from constants import WAREHOUSE_WIDTH, WAREHOUSE_HEIGHT, GRID_SIZE, BLUE, RED, B
 from ogm import OccupancyGridMap, UNKNOWN, FREE, OCCUPIED, GOAL
 from lidar import LidarSensor
 from isam import ISAM
+from astar import astar, plan_multi_goal_path
 
 DEBUG = True
 
@@ -89,7 +90,7 @@ class Robot:
         self.last_node_angle = 0
         
         # Exploration state
-        self.exploration_mode = "EXPLORE"  # EXPLORE, RETURN_TO_START, or PLAN_TO_GOALS
+        self.exploration_mode = "EXPLORE"  # EXPLORE, RETURN_TO_START, or DELIVER_GOALS
         
         # DFS coverage: stack-based backtracking
         self.visited = set()  # Set of (x, y) visited cells
@@ -98,6 +99,12 @@ class Robot:
         # Return to start after exploration
         self.return_path = []  # Path back to start position
         self.return_path_index = 0
+        
+        # Goal delivery state
+        self.delivery_path = []  # Current path to goal or discharge dock
+        self.delivery_path_index = 0
+        self.delivery_mode = "PICKUP"  # PICKUP or DROPOFF
+        self.goals_to_deliver = []  # Remaining goals to deliver (in priority order)
         
         debug_log(f"Robot initialized at ({x}, {y}) with DFS coverage exploration")
     
@@ -238,7 +245,7 @@ class Robot:
     
     def astar(self, start, target):
         """
-        A* pathfinding from start to target.
+        A* pathfinding from start to target using the astar module.
         
         Args:
             start: (row, col) starting position
@@ -247,77 +254,51 @@ class Robot:
         Returns:
             list: Path as list of (row, col) tuples, or None if unreachable
         """
-        if start == target:
-            return [start]
-        
+        # Convert (row, col) to (x, y)
         sr, sc = start
         tr, tc = target
+        start_xy = (sc, sr)  # (x, y)
+        target_xy = (tc, tr)  # (x, y)
         
-        # Check if target is valid
-        if not (0 <= tr < WAREHOUSE_HEIGHT and 0 <= tc < WAREHOUSE_WIDTH):
-            return None
-        if self.ogm.is_obstacle(tc, tr):
-            return None
+        # Use A* module
+        path = astar(start_xy, target_xy, self.ogm, allow_goals=True)
         
-        # A* algorithm
-        open_set = [(0, sr, sc)]
-        came_from = {}
-        g_score = {(sr, sc): 0}
-        f_score = {(sr, sc): abs(tr - sr) + abs(tc - sc)}  # Manhattan heuristic
+        if path:
+            # Convert path from (x, y) to (row, col)
+            path_rc = [(y, x) for x, y in path]
+            return path_rc
         
-        while open_set:
-            open_set.sort(key=lambda x: x[0])
-            current_f, cr, cc = open_set.pop(0)
-            
-            if (cr, cc) == (tr, tc):
-                # Reconstruct path
-                path = []
-                node = (cr, cc)
-                while node is not None:
-                    path.append(node)
-                    node = came_from.get(node)
-                path.reverse()
-                return path
-            
-            # Check neighbors
-            for nr, nc in self.neighbors4(cr, cc):
-                if self.ogm.is_obstacle(nc, nr):
-                    continue
-                
-                tentative_g = g_score[(cr, cc)] + 1
-                
-                if (nr, nc) not in g_score or tentative_g < g_score[(nr, nc)]:
-                    came_from[(nr, nc)] = (cr, cc)
-                    g_score[(nr, nc)] = tentative_g
-                    h = abs(tr - nr) + abs(tc - nc)  # Manhattan heuristic
-                    f = tentative_g + h
-                    f_score[(nr, nc)] = f
-                    
-                    # Add to open set if not already there
-                    if not any(nr == r and nc == c for _, r, c in open_set):
-                        open_set.append((f, nr, nc))
-        
-        return None  # No path found
+        return None
     
     def plan_return_to_start(self):
         """Plan path back to starting position after exploration is complete."""
-        current_pos = (int(self.y), int(self.x))  # (row, col)
-        start_pos = (int(self.start_y), int(self.start_x))  # (row, col)
+        current_pos = (int(self.x), int(self.y))  # (x, y)
+        start_pos = (int(self.start_x), int(self.start_y))  # (x, y)
         
-        # Plan path using A*
-        path = self.astar(current_pos, start_pos)
+        # Plan path using A* module
+        path = astar(current_pos, start_pos, self.ogm, allow_goals=True)
         
         if path and len(path) > 1:
-            # Convert path from (row, col) to (x, y)
-            self.return_path = []
-            for r, c in path[1:]:  # Skip first cell (current position)
-                self.return_path.append((c, r))  # Convert (row, col) to (x, y)
+            self.return_path = path[1:]  # Skip first cell (current position)
             self.return_path_index = 0
             debug_log(f"Planned return path to start: {len(self.return_path)} steps")
         else:
             debug_log("Warning: Could not plan path to start position")
             self.return_path = []
             self.return_path_index = 0
+    
+    def plan_goal_delivery(self):
+        """Initialize goal delivery state with goals in priority order."""
+        if not self.warehouse or not self.warehouse.goals:
+            debug_log("No goals to deliver")
+            return
+        
+        # Get goals in priority order (they're already in order)
+        self.goals_to_deliver = list(self.warehouse.goals)
+        self.delivery_mode = "PICKUP"
+        self.delivery_path = []
+        self.delivery_path_index = 0
+        debug_log(f"Initialized goal delivery: {len(self.goals_to_deliver)} goals to deliver")
 
     def explore_next(self, current_time):
         """Execute one step of DFS coverage exploration."""
@@ -442,9 +423,117 @@ class Robot:
                     debug_log("=" * 50)
                     debug_log(f"RETURNED TO START POSITION ({int(self.start_x)}, {int(self.start_y)})")
                     debug_log("Exploration mission complete!")
+                    debug_log("Starting goal delivery phase...")
                     debug_log("=" * 50)
-                    self.is_mapping = False
-                    return False
+                    
+                    # Switch to goal delivery mode
+                    self.exploration_mode = "DELIVER_GOALS"
+                    self.delivery_mode = "PICKUP"
+                    # Plan goal delivery paths
+                    self.plan_goal_delivery()
+                    return True
+        
+        elif self.exploration_mode == "DELIVER_GOALS":
+            # Goal delivery phase: pick up goals and deliver to discharge dock
+            if not self.delivery_path or self.delivery_path_index >= len(self.delivery_path):
+                # Path complete or no path - check if we're at a goal or dock
+                current_pos = (int(self.x), int(self.y))
+                
+                # Check if we're at a goal (pickup mode)
+                if self.delivery_mode == "PICKUP" and not self.has_cargo:
+                    # Check if we're already at a goal
+                    at_goal = False
+                    for goal in self.goals_to_deliver:
+                        goal_x, goal_y = goal[0], goal[1]
+                        if abs(self.x - goal_x) < 0.5 and abs(self.y - goal_y) < 0.5:
+                            # Pick up cargo
+                            self.has_cargo = True
+                            self.current_goal = goal
+                            self.delivery_mode = "DROPOFF"
+                            debug_log(f"Picked up cargo at goal ({goal_x}, {goal_y})")
+                            
+                            # Plan path to discharge dock
+                            discharge_dock = self.warehouse.discharge_dock
+                            if discharge_dock:
+                                path = astar(current_pos, discharge_dock, self.ogm, allow_goals=True)
+                                if path and len(path) > 1:
+                                    self.delivery_path = path[1:]
+                                    self.delivery_path_index = 0
+                                    debug_log(f"Planned path to discharge dock: {len(self.delivery_path)} steps")
+                                    return False
+                            at_goal = True
+                            break
+                    
+                    # If not at a goal, plan path to next goal
+                    if not at_goal and self.goals_to_deliver:
+                        next_goal = self.goals_to_deliver[0]
+                        path = astar(current_pos, next_goal, self.ogm, allow_goals=True)
+                        if path and len(path) > 1:
+                            self.delivery_path = path[1:]
+                            self.delivery_path_index = 0
+                            debug_log(f"Planned path to goal {next_goal}: {len(self.delivery_path)} steps")
+                            return False
+                        else:
+                            debug_log(f"Warning: No path to goal {next_goal}, removing from list")
+                            self.goals_to_deliver.remove(next_goal)
+                            return False
+                
+                # Check if we're at discharge dock (dropoff mode)
+                elif self.delivery_mode == "DROPOFF" and self.has_cargo:
+                    discharge_dock = self.warehouse.discharge_dock
+                    if discharge_dock:
+                        dock_x, dock_y = discharge_dock[0], discharge_dock[1]
+                        if abs(self.x - dock_x) < 0.5 and abs(self.y - dock_y) < 0.5:
+                            # Drop cargo
+                            self.has_cargo = False
+                            if self.current_goal in self.warehouse.goals:
+                                self.warehouse.goals.remove(self.current_goal)
+                            if self.current_goal in self.goals_to_deliver:
+                                self.goals_to_deliver.remove(self.current_goal)
+                            self.score += 1
+                            self.current_goal = None
+                            self.delivery_mode = "PICKUP"
+                            debug_log(f"Dropped cargo at discharge dock ({dock_x}, {dock_y}). Score: {self.score}")
+                            
+                            # Check if more goals to deliver
+                            if self.goals_to_deliver:
+                                # Plan path to next goal
+                                current_pos = (int(self.x), int(self.y))
+                                next_goal = self.goals_to_deliver[0]
+                                path = astar(current_pos, next_goal, self.ogm, allow_goals=True)
+                                if path and len(path) > 1:
+                                    self.delivery_path = path[1:]
+                                    self.delivery_path_index = 0
+                                    debug_log(f"Planned path to next goal {next_goal}: {len(self.delivery_path)} steps")
+                                    return False
+                            else:
+                                # All goals delivered
+                                debug_log("=" * 50)
+                                debug_log("ALL GOALS DELIVERED! Mission complete!")
+                                debug_log(f"Final score: {self.score}")
+                                debug_log("=" * 50)
+                                self.is_mapping = False
+                                return False
+                
+                # No more goals or path failed
+                return False
+            
+            # Execute delivery path
+            if self.delivery_path_index < len(self.delivery_path):
+                next_cell = self.delivery_path[self.delivery_path_index]
+                nx, ny = next_cell
+                
+                if current_time - self.last_move_time >= self.move_cooldown:
+                    if self.move_to(nx, ny, current_time):
+                        self.delivery_path_index += 1
+                        # Rotate towards direction
+                        if self.delivery_path_index < len(self.delivery_path):
+                            nx2, ny2 = self.delivery_path[self.delivery_path_index]
+                            dx = nx2 - nx
+                            dy = ny2 - ny
+                            self.rotate_towards(dx, dy)
+                        debug_log(f"Delivery: ({nx}, {ny}), {len(self.delivery_path) - self.delivery_path_index} steps remaining")
+                        return True
         
         return False
     
@@ -479,6 +568,12 @@ class Robot:
         self.stack = []
         self.return_path = []
         self.return_path_index = 0
+        
+        # Reset delivery state
+        self.delivery_path = []
+        self.delivery_path_index = 0
+        self.delivery_mode = "PICKUP"
+        self.goals_to_deliver = []
         
         # Mark starting position as explored
         self.update_with_sensor()

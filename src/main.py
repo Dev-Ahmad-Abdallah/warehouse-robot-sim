@@ -5,6 +5,7 @@ Implements frontier-based exploration with iSAM localization.
 
 import pygame
 import sys
+import argparse
 from constants import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, GRID_SIZE,
     WHITE, BLACK, GREEN, RED,
@@ -13,17 +14,30 @@ from constants import (
 from robot import Robot
 from warehouse import Warehouse
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description='Warehouse Robot Simulation')
+parser.add_argument('--algo', type=str, default='A*', 
+                    choices=['A*', 'astar', 'A-star', 'A_star'],
+                    help='Pathfinding algorithm to use (default: A*)')
+args = parser.parse_args()
+
+# Normalize algorithm name
+algorithm = args.algo.replace('*', 'star').replace('-', '').replace('_', '').lower()
+if algorithm == 'astar':
+    algorithm = 'A*'
+
 # Initialize pygame
 pygame.init()
 
 # Create the display
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Warehouse Robot Simulation - Frontier-Based Exploration with iSAM")
+pygame.display.set_caption(f"Warehouse Robot Simulation - DFS Exploration with {algorithm}")
 clock = pygame.time.Clock()
 
 # Initialize warehouse and robot
 debug_log("=" * 50)
-debug_log("INITIALIZING WAREHOUSE ROBOT SIMULATION WITH FRONTIER-BASED EXPLORATION")
+debug_log(f"INITIALIZING WAREHOUSE ROBOT SIMULATION WITH DFS EXPLORATION")
+debug_log(f"Pathfinding Algorithm: {algorithm}")
 debug_log("=" * 50)
 warehouse = Warehouse()
 robot = Robot(1, 1, warehouse=warehouse)
@@ -146,7 +160,7 @@ while running:
         )
         screen.blit(progress_text, (10, 110))
         
-        # Show DFS status or return status
+        # Show DFS status, return status, or delivery status
         if robot.exploration_mode == "RETURN_TO_START":
             if hasattr(robot, 'return_path') and robot.return_path:
                 remaining = len(robot.return_path) - robot.return_path_index
@@ -155,6 +169,22 @@ while running:
                     True, GREEN
                 )
                 screen.blit(return_text, (10, 135))
+        elif robot.exploration_mode == "DELIVER_GOALS":
+            if hasattr(robot, 'goals_to_deliver'):
+                goals_remaining = len(robot.goals_to_deliver)
+                goals_total = len(warehouse.goals) + goals_remaining if warehouse.goals else goals_remaining
+                delivery_text = font.render(
+                    f"DELIVERING GOALS: {goals_remaining} remaining | Mode: {robot.delivery_mode} | Score: {robot.score}",
+                    True, GREEN
+                )
+                screen.blit(delivery_text, (10, 135))
+                if hasattr(robot, 'delivery_path') and robot.delivery_path:
+                    remaining = len(robot.delivery_path) - robot.delivery_path_index
+                    path_text = font.render(
+                        f"Path steps remaining: {remaining}",
+                        True, BLACK
+                    )
+                    screen.blit(path_text, (10, 160))
         elif hasattr(robot, 'stack') and robot.stack:
             dfs_text = font.render(
                 f"DFS Stack: {len(robot.stack)} cells | Backtracking when needed",
