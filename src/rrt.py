@@ -70,30 +70,47 @@ def find_nearest_node(tree, x, y):
     return nearest
 
 
-def step_towards(x1, y1, x2, y2, step_size=2):
+def step_towards(x1, y1, x2, y2, step_size=1):
     """Step from (x1, y1) towards (x2, y2) by step_size using grid-based movement."""
     dist = euclidean_distance(x1, y1, x2, y2)
     if dist <= step_size:
         return (int(x2), int(y2))
     
-    # Move towards target by step_size using grid-based movement (4-connected)
-    # Use Manhattan-like movement to ensure we stay on grid
+    # For step_size=1, use simple 4-connected movement
+    if step_size == 1:
+        dx = x2 - x1
+        dy = y2 - y1
+        
+        # Move in the direction with larger component
+        if abs(dx) > abs(dy):
+            # Move horizontally
+            new_x = x1 + (1 if dx > 0 else -1)
+            new_y = y1
+        elif abs(dy) > 0:
+            # Move vertically
+            new_x = x1
+            new_y = y1 + (1 if dy > 0 else -1)
+        else:
+            return (int(x1), int(y1))
+        
+        return (int(new_x), int(new_y))
+    
+    # For step_size > 1, use multi-step approach
     dx = x2 - x1
     dy = y2 - y1
     
-    # Normalize to step_size
     if abs(dx) + abs(dy) == 0:
         return (int(x1), int(y1))
     
     # Move in the direction with larger component first
     if abs(dx) > abs(dy):
         # Move horizontally first
-        step_x = step_size if dx > 0 else -step_size
+        step_x = min(step_size, abs(dx)) if dx > 0 else -min(step_size, abs(dx))
         new_x = x1 + step_x
         new_y = y1
     else:
         # Move vertically first
-        step_y = step_size if dy > 0 else -step_size
+        step_y = min(step_size, abs(dy)) if dy > 0 else -min(step_size, abs(dy))
         new_x = x1
         new_y = y1 + step_y
     
@@ -104,18 +121,19 @@ def step_towards(x1, y1, x2, y2, step_size=2):
         return (int(x2), int(y2))
 
 
-def rrt(start, target, ogm, allow_goals=True, max_iterations=5000, step_size=2, goal_bias=0.1):
+def rrt(start, target, ogm, allow_goals=True, max_iterations=2000, step_size=1, goal_bias=0.3):
     """
     RRT pathfinding from start to target using the occupancy grid map.
+    Optimized for faster convergence and real-time performance.
     
     Args:
         start: (x, y) starting position in grid coordinates
         target: (x, y) target position in grid coordinates
         ogm: OccupancyGridMap to check obstacles
         allow_goals: If True, GOAL cells are traversable (default: True)
-        max_iterations: Maximum number of iterations (default: 5000)
-        step_size: Step size for tree expansion (default: 2)
-        goal_bias: Probability of sampling goal instead of random (default: 0.1)
+        max_iterations: Maximum number of iterations (default: 2000, reduced from 5000)
+        step_size: Step size for tree expansion (default: 1, reduced from 2 for better grid movement)
+        goal_bias: Probability of sampling goal instead of random (default: 0.3, increased from 0.1)
         
     Returns:
         list: Path as list of (x, y) tuples, or None if unreachable
@@ -138,22 +156,53 @@ def rrt(start, target, ogm, allow_goals=True, max_iterations=5000, step_size=2, 
         debug_print(f"RRT target position ({tx}, {ty}) is not traversable")
         return None
     
+    # Calculate Manhattan distance for quick check
+    manhattan_dist = abs(tx - sx) + abs(ty - sy)
+    if manhattan_dist <= 10:
+        # For short distances, use simplified approach
+        # Try direct path first
+        if is_path_clear_grid(sx, sy, tx, ty, ogm, allow_goals):
+            debug_print(f"RRT: Direct path found for short distance ({manhattan_dist})")
+            return [(sx, sy), (tx, ty)]
+    
     # Initialize RRT tree
     tree = {}  # {node: parent}
     tree[start] = None
     iterations = 0
+    last_progress_log = 0
     
     while iterations < max_iterations:
         iterations += 1
         
+        # Progress logging every 500 iterations
+        if iterations - last_progress_log >= 500:
+            debug_print(f"RRT: Iteration {iterations}/{max_iterations}, tree size: {len(tree)}")
+            last_progress_log = iterations
+        
+        # Adaptive goal bias: increase as we get closer or after many iterations
+        current_goal_bias = goal_bias
+        if iterations > max_iterations * 0.5:
+            current_goal_bias = min(0.5, goal_bias * 2)  # Increase goal bias after 50% iterations
+        
         # Sample random point (with goal bias)
-        if random.random() < goal_bias:
+        if random.random() < current_goal_bias:
             # Sample goal
             rand_x, rand_y = tx, ty
         else:
-            # Sample random point in free space
-            rand_x = random.randint(0, WAREHOUSE_WIDTH - 1)
-            rand_y = random.randint(0, WAREHOUSE_HEIGHT - 1)
+            # Sample random point in free space (bias towards area between start and target)
+            # This helps exploration in relevant areas
+            if random.random() < 0.5:
+                # Sample in area between start and target
+                mid_x = (sx + tx) // 2
+                mid_y = (sy + ty) // 2
+                range_x = max(5, abs(tx - sx))
+                range_y = max(5, abs(ty - sy))
+                rand_x = random.randint(max(0, mid_x - range_x), min(WAREHOUSE_WIDTH - 1, mid_x + range_x))
+                rand_y = random.randint(max(0, mid_y - range_y), min(WAREHOUSE_HEIGHT - 1, mid_y + range_y))
+            else:
+                # Sample random point in entire space
+                rand_x = random.randint(0, WAREHOUSE_WIDTH - 1)
+                rand_y = random.randint(0, WAREHOUSE_HEIGHT - 1)
         
         # Find nearest node in tree
         nearest = find_nearest_node(tree.keys(), rand_x, rand_y)
@@ -168,15 +217,26 @@ def rrt(start, target, ogm, allow_goals=True, max_iterations=5000, step_size=2, 
             continue
         
         # Check if path from nearest to new point is clear (grid-based check)
-        if not is_path_clear_grid(nearest[0], nearest[1], new_x, new_y, ogm, allow_goals):
-            continue
+        # Only check if step_size > 1, otherwise adjacent check is sufficient
+        if step_size > 1:
+            if not is_path_clear_grid(nearest[0], nearest[1], new_x, new_y, ogm, allow_goals):
+                continue
+        else:
+            # For step_size=1, just check if adjacent
+            if abs(new_x - nearest[0]) + abs(new_y - nearest[1]) != 1:
+                continue
         
         # Add new node to tree
         new_node = (new_x, new_y)
+        # Skip if already in tree
+        if new_node in tree:
+            continue
+        
         tree[new_node] = nearest
         
         # Check if we're close enough to target
-        if euclidean_distance(new_x, new_y, tx, ty) <= step_size * 1.5:
+        dist_to_target = euclidean_distance(new_x, new_y, tx, ty)
+        if dist_to_target <= step_size * 2:  # Increased threshold for better convergence
             # Check if direct path to target is clear
             if is_path_clear_grid(new_x, new_y, tx, ty, ogm, allow_goals):
                 # Reconstruct path from start to target
@@ -198,8 +258,11 @@ def rrt(start, target, ogm, allow_goals=True, max_iterations=5000, step_size=2, 
                 debug_print(f"RRT path found: {len(path)} steps from ({sx}, {sy}) to ({tx}, {ty}) in {iterations} iterations")
                 return path
     
-    debug_print(f"RRT path not found from ({sx}, {sy}) to ({tx}, {ty}) after {iterations} iterations")
-    return None  # No path found
+    debug_print(f"RRT path not found from ({sx}, {sy}) to ({tx}, {ty}) after {iterations} iterations (tree size: {len(tree)})")
+    # Fallback: try A* if RRT fails
+    debug_print("RRT: Falling back to A* for pathfinding")
+    from astar import astar
+    return astar(start, target, ogm, allow_goals)
 
 
 def is_path_clear_grid(x1, y1, x2, y2, ogm, allow_goals=True):
